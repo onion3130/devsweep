@@ -19,6 +19,14 @@ struct Cli {
     #[arg(long, global = true, default_value_t = 6)]
     max_depth: usize,
 
+    /// Only include dirs untouched for at least this long (e.g. 14d, 24h, 2w)
+    #[arg(long, global = true)]
+    older_than: Option<String>,
+
+    /// Only include dirs at least this big (e.g. 100MB, 1GB)
+    #[arg(long, global = true)]
+    min_size: Option<String>,
+
     /// Output as JSON
     #[arg(long, global = true, default_value_t = false)]
     json: bool,
@@ -42,7 +50,7 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         dry_run: bool,
 
-        /// Actually delete
+        /// Actually delete (permanent and irreversible — see Disclaimer in README)
         #[arg(long, default_value_t = false)]
         delete: bool,
 
@@ -62,10 +70,37 @@ enum Commands {
         #[arg(long, short, default_value_t = false)]
         yes: bool,
     },
+    /// Show what's inside each trash dir (biggest files first)
+    Preview {
+        /// Root to preview
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
+
+    let older_than = match &cli.older_than {
+        Some(s) => match scanner::parse_age(s) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(2);
+            }
+        },
+        None => None,
+    };
+    let min_size = match &cli.min_size {
+        Some(s) => match scanner::parse_size(s) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                eprintln!("error: {e}");
+                std::process::exit(2);
+            }
+        },
+        None => None,
+    };
 
     match cli.command {
         Some(Commands::Rules) => {
@@ -75,7 +110,7 @@ fn main() {
             }
         }
         Some(Commands::Scan { path }) => {
-            run_scan(&path, cli.max_depth, cli.json);
+            run_scan(&path, cli.max_depth, cli.json, older_than, min_size);
         }
         Some(Commands::Clean {
             path,
@@ -85,20 +120,29 @@ fn main() {
         }) => {
             // `clean` -> dry run, `clean --delete` -> delete, `--dry-run` always wins
             let do_delete = delete && !dry_run;
-            run_clean(&path, cli.max_depth, cli.json, do_delete, yes);
+            run_clean(&path, cli.max_depth, cli.json, do_delete, yes, older_than, min_size);
         }
         Some(Commands::Interactive { path, yes }) => {
-            run_interactive(&path, cli.max_depth, yes);
+            run_interactive(&path, cli.max_depth, yes, older_than, min_size);
+        }
+        Some(Commands::Preview { path }) => {
+            run_preview(&path, cli.max_depth, cli.json, older_than, min_size);
         }
         None => {
             let root = cli.path.unwrap_or(PathBuf::from("."));
-            run_scan(&root, cli.max_depth, cli.json);
+            run_scan(&root, cli.max_depth, cli.json, older_than, min_size);
         }
     }
 }
 
-fn run_scan(root: &PathBuf, max_depth: usize, as_json: bool) {
-    let mut hits = scanner::scan(root, max_depth);
+fn run_scan(
+    root: &PathBuf,
+    max_depth: usize,
+    as_json: bool,
+    older_than: Option<u64>,
+    min_size: Option<u64>,
+) {
+    let mut hits = scanner::apply_filters(scanner::scan(root, max_depth), older_than, min_size);
     // scan() already sorts biggest-first
     let total: u64 = hits.iter().map(|h| h.size_bytes).sum();
 
@@ -117,14 +161,16 @@ fn run_scan(root: &PathBuf, max_depth: usize, as_json: bool) {
 
     // Simple table without extra deps
     println!(
-        "{:<10} {:<18} {}",
-        "SIZE", "RULE", "PATH"
+        "{:<10} {:<8} {:>7} {:<12} {}",
+        "SIZE", "AGE", "FILES", "RULE", "PATH"
     );
-    println!("{}", "-".repeat(70));
+    println!("{}", "-".repeat(80));
     for h in &hits {
         println!(
-            "{:<10} {:<18} {}",
+            "{:<10} {:<8} {:>7} {:<12} {}",
             scanner::format_bytes(h.size_bytes),
+            h.age_human,
+            h.files,
             h.rule,
             h.path.display()
         );
@@ -139,8 +185,16 @@ fn run_scan(root: &PathBuf, max_depth: usize, as_json: bool) {
     let _ = &mut hits;
 }
 
-fn run_clean(root: &PathBuf, max_depth: usize, as_json: bool, do_delete: bool, yes: bool) {
-    let hits = scanner::scan(root, max_depth);
+fn run_clean(
+    root: &PathBuf,
+    max_depth: usize,
+    as_json: bool,
+    do_delete: bool,
+    yes: bool,
+    older_than: Option<u64>,
+    min_size: Option<u64>,
+) {
+    let hits = scanner::apply_filters(scanner::scan(root, max_depth), older_than, min_size);
     if hits.is_empty() {
         println!("Nothing to clean under {}", root.display());
         return;
@@ -236,8 +290,14 @@ fn parse_selection(input: &str, len: usize) -> Vec<usize> {
     out
 }
 
-fn run_interactive(root: &PathBuf, max_depth: usize, yes: bool) {
-    let hits = scanner::scan(root, max_depth);
+fn run_interactive(
+    root: &PathBuf,
+    max_depth: usize,
+    yes: bool,
+    older_than: Option<u64>,
+    min_size: Option<u64>,
+) {
+    let hits = scanner::apply_filters(scanner::scan(root, max_depth), older_than, min_size);
     if hits.is_empty() {
         println!("Nothing to clean under {}", root.display());
         return;
@@ -246,9 +306,11 @@ fn run_interactive(root: &PathBuf, max_depth: usize, yes: bool) {
     println!("Select dirs to delete under {}:", root.display());
     for (i, h) in hits.iter().enumerate() {
         println!(
-            "  [{}] {:<10} {:<14} {}",
+            "  [{}] {:<10} {:>6} files {:<8} {:<12} {}",
             i + 1,
             scanner::format_bytes(h.size_bytes),
+            h.files,
+            h.age_human,
             h.rule,
             h.path.display()
         );
@@ -296,6 +358,45 @@ fn run_interactive(root: &PathBuf, max_depth: usize, yes: bool) {
         selected.len(),
         scanner::format_bytes(freed)
     );
+}
+
+fn run_preview(
+    root: &PathBuf,
+    max_depth: usize,
+    as_json: bool,
+    older_than: Option<u64>,
+    min_size: Option<u64>,
+) {
+    let hits = scanner::apply_filters(scanner::scan(root, max_depth), older_than, min_size);
+    if hits.is_empty() {
+        println!("No dev clutter found under {}", root.display());
+        return;
+    }
+
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&hits).unwrap_or_else(|_| "[]".into())
+        );
+        return;
+    }
+
+    for h in &hits {
+        println!(
+            "{}  ({} in {} files, {}, {})",
+            h.path.display(),
+            h.size_human,
+            h.files,
+            h.rule,
+            h.age_human
+        );
+        if h.largest.is_empty() {
+            println!("    (empty directory)");
+        }
+        for f in &h.largest {
+            println!("    {:<10} {}", f.size_human, f.rel);
+        }
+    }
 }
 
 #[cfg(test)]

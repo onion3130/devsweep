@@ -4,6 +4,17 @@ Blazing-fast dev clutter cleaner — find and nuke `node_modules`, `target/`, `_
 
 Built in Rust for parallel filesystem scanning. Fun side-project, useful daily.
 
+## Disclaimer — use at your own risk
+
+devsweep **permanently deletes** directories. There is no trash or recycle-bin
+recovery — deletion is irreversible. Always review `scan` output (or run
+`clean` without `--delete` first, or use `interactive` to pick items one by
+one), and keep backups / version control for anything important.
+
+The authors accept **no liability** for deleted data, lost work, or any damage
+from using this tool. By running `devsweep clean --delete` you accept that you
+do so entirely at your own risk. See `LICENSE`.
+
 ## Why
 
 Dev folders silently eat 10-50 GB. Python/JS walkers are slow. `devsweep` walks in parallel with `rayon` + `walkdir` and skips descending into trash once found.
@@ -17,7 +28,9 @@ irm https://raw.githubusercontent.com/onion3130/devsweep/main/install.ps1 | iex
 ```
 
 That downloads the latest `devsweep.exe`, puts it in `%LOCALAPPDATA%\devsweep`,
-adds it to your PATH, and verifies it. Restart your terminal, then:
+verifies its SHA-256 checksum against the release's `SHA256SUMS.txt` (aborts
+on mismatch), adds it to your PATH, and verifies it runs. Restart your
+terminal, then:
 
 ```powershell
 devsweep scan C:\code
@@ -66,9 +79,16 @@ devsweep clean C:\path\to\code --delete --yes
 devsweep interactive C:\path\to\code
 devsweep interactive C:\path\to\code --yes
 
+# v0.3: only old / big clutter (skips projects you're actively using)
+devsweep scan C:\code --older-than 14d --min-size 100MB
+
+# v0.3: look inside before you delete (biggest files per dir)
+devsweep preview C:\code
+
 # json for scripting
 devsweep scan . --json
 devsweep clean . --json
+devsweep preview . --json
 ```
 
 Built-in rules: `node_modules`, `target`, `dist`, `build`, `.next`, `__pycache__`, `.venv`, `venv`, `.pytest_cache`, `.parcel-cache`, `.turbo`, `.svelte-kit`, `coverage`.
@@ -78,6 +98,8 @@ Safety:
 - Skips `.git` always
 - `clean` without `--delete` is dry-run
 - Real deletes ask for confirmation unless `--yes`
+- `scan` shows file counts and ages; `preview` shows the biggest files inside
+  each dir — look before you delete (see Disclaimer above)
 
 ## Example
 
@@ -93,9 +115,20 @@ Found 2 dirs, total reclaimable: 14.6 KB
 ## Roadmap
 
 - [x] v0.2: Interactive picker (`interactive`, e.g. `1,3` / `1-3` / `all`)
-- [ ] v0.3: `--watch` daemon + weekly report
-- [ ] Benchmark vs `ncdu` for README gif
-- [ ] Custom `rules.toml` support
+- [x] v0.3 (in progress): Safety filters (`--older-than`, `--min-size`),
+  contents preview (`preview`, file counts), liability disclaimer + `LICENSE`
+- [ ] Deletion safety first: refuse dangerous roots (filesystem root, home
+  dir), never follow symlinks out of the scanned tree, full test suite
+  (symlinks, permissions, missing paths, nested matches, `.git` protection)
+- [ ] `rules.toml` config (`[rules]` on/off per directory name, `[safety]`
+  defaults) — especially useful for `build` / `dist`
+- [ ] CI: `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`,
+  `cargo build --release`, plus Windows integration tests for deletion
+- [ ] Verified installer: SHA-256-checked downloads as the default,
+  checksums/signatures on every release
+- [ ] Real benchmarks vs a straightforward sequential walker (evidence for
+  the "blazing-fast" claim)
+- [ ] `--watch` mode with periodic reclaimable-space report
 
 ## Layout
 
