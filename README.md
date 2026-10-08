@@ -32,13 +32,13 @@ cargo build --release
 ```powershell
 # scan current dir (default)
 devsweep
-devsweep scan C:\Users\OrionSlegh\Documents\Code --max-depth 6
+devsweep scan C:\code --max-depth 6
 
 # list rules
 devsweep rules
 
 # dry-run clean (safe default)
-devsweep clean C:\Users\OrionSlegh\Documents\Code
+devsweep clean C:\code
 
 # actually delete (prompts unless --yes)
 devsweep clean C:\path\to\code --delete --yes
