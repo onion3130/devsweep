@@ -8,7 +8,26 @@ Built in Rust for parallel filesystem scanning. Fun side-project, useful daily.
 
 Dev folders silently eat 10-50 GB. Python/JS walkers are slow. `devsweep` walks in parallel with `rayon` + `walkdir` and skips descending into trash once found.
 
-## Install
+## Install (beginners, one line)
+
+Open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/onion3130/devsweep/main/install.ps1 | iex
+```
+
+That downloads the latest `devsweep.exe`, puts it in `%LOCALAPPDATA%\devsweep`,
+adds it to your PATH, and verifies it. Restart your terminal, then:
+
+```powershell
+devsweep scan C:\code
+devsweep interactive C:\code
+```
+
+Re-run the same line anytime to update. To uninstall, delete
+`%LOCALAPPDATA%\devsweep` and remove it from your user PATH.
+
+## Install (from source)
 
 Requires Rust + a GCC linker on Windows (MSVC Build Tools *or* MinGW).
 
